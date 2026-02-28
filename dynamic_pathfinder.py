@@ -321,6 +321,20 @@ def make_animation_figure(frame_grids, frame_labels, rows, cols, frame_ms=100):
     return fig
 
 
+def _auto_play(frame_ms: int):
+    """Inject JS to auto-start the most recently rendered Plotly animation."""
+    import streamlit.components.v1 as components
+    components.html(
+        f"<script>setTimeout(function(){{"
+        f"var p=window.parent.document.querySelectorAll('.js-plotly-plot');"
+        f"var d=p[p.length-1];"
+        f"if(d)Plotly.animate(d,null,{{transition:{{duration:0}},"
+        f"frame:{{duration:{frame_ms},redraw:true}},fromcurrent:false}});"
+        f"}},600);</script>",
+        height=0,
+    )
+
+
 # PIL renderer for interactive grid editing
 _GAP    = 2
 _BORDER = 2
@@ -660,6 +674,7 @@ if run_btn:
                 frame_grids, frame_labels, ss.rows, ss.cols, frame_ms
             )
             chart_ph.plotly_chart(anim_fig, use_container_width=True)
+            _auto_play(frame_ms)
 
             ss.result_path    = path
             ss.visited_order  = visited_order
@@ -667,12 +682,11 @@ if run_btn:
             ss.agent_pos      = None
             status_ph.success(
                 f"✅ Done!  Nodes visited: {len(visited_order)}  |  "
-                f"Path cost: {len(path)-1}  |  Time: {elapsed_ms:.1f} ms  "
-                f"— Hit ▶ Play on the chart to replay"
+                f"Path cost: {len(path)-1}  |  Time: {elapsed_ms:.1f} ms"
             )
 
     else:
-        status_ph.info("🔍 Computing initial path…")
+        status_ph.info("🔍 Simulating dynamic run…")
 
         t0 = time.perf_counter()
         path, visited_order, frontier_snaps = algo_fn(
@@ -682,20 +696,25 @@ if run_btn:
 
         if path is None:
             _render_plotly(visited=visited_order, title="❌ No initial path found")
-            status_ph.error(
-                "❌ No initial path — clear some obstacles then run again."
-            )
+            status_ph.error("❌ No initial path — clear some obstacles then run again.")
         else:
             total_nodes   = len(visited_order)
             total_cost    = 0
             total_time_ms = elapsed_ms
+            stranded      = False
 
-            agent     = ss.start
-            step_idx  = 0     # current index in `path`
-            replanned = False
+            grid_sim = ss.grid.copy()
+            agent    = ss.start
+            step_idx = 0
+
+            frame_grids  = []
+            frame_labels = []
+            frame_grids.append(build_display_grid(
+                grid_sim, ss.start, ss.goal, path=path, agent_pos=agent
+            ))
+            frame_labels.append("Start")
 
             while agent != ss.goal:
-                # Advance one step
                 if step_idx + 1 < len(path):
                     step_idx += 1
                     agent = path[step_idx]
@@ -705,99 +724,74 @@ if run_btn:
                 total_cost += 1
                 replanned   = False
 
-                # Maybe spawn new obstacle
                 if random.random() < spawn_prob:
                     candidates = [
                         (r, c)
                         for r in range(ss.rows)
                         for c in range(ss.cols)
-                        if ss.grid[r, c] == EMPTY
+                        if grid_sim[r, c] == EMPTY
                         and (r, c) != ss.start
                         and (r, c) != ss.goal
                         and (r, c) != agent
                     ]
                     if candidates:
                         new_wall = random.choice(candidates)
-                        ss.grid[new_wall[0], new_wall[1]] = WALL
-
-                        # Re-plan only if new wall is on remaining path
-                        remaining = set(path[step_idx:])
-                        if new_wall in remaining:
+                        grid_sim[new_wall[0], new_wall[1]] = WALL
+                        if new_wall in set(path[step_idx:]):
                             t1 = time.perf_counter()
                             new_path, nv, _ = algo_fn(
-                                ss.grid, agent, ss.goal, heuristic_fn
+                                grid_sim, agent, ss.goal, heuristic_fn
                             )
                             total_time_ms += (time.perf_counter() - t1) * 1000
                             total_nodes   += len(nv)
                             replanned      = True
-
                             if new_path is None:
-                                # Draw final state + error
-                                disp = build_display_grid(
-                                    ss.grid, ss.start, ss.goal, agent_pos=agent
-                                )
-                                chart_ph.plotly_chart(
-                                    make_figure(disp, "⛔ Path blocked — stranded!"),
-                                    use_container_width=True,
-                                )
-                                status_ph.error(
-                                    "⛔ All routes blocked — agent is stranded!"
-                                )
-                                ss.metrics = dict(
-                                    nodes=total_nodes, cost=total_cost,
-                                    time_ms=total_time_ms,
-                                )
-                                met1.metric("🔵 Nodes Visited", total_nodes)
-                                met2.metric("📏 Path Cost",     total_cost)
-                                met3.metric("⏱ Execution Time",
-                                            f"{total_time_ms:.1f} ms")
-                                st.stop()
-
+                                frame_grids.append(build_display_grid(
+                                    grid_sim, ss.start, ss.goal, agent_pos=agent
+                                ))
+                                frame_labels.append(f"⛔ Stranded! — step {total_cost}")
+                                stranded = True
+                                break
                             path     = new_path
                             step_idx = 0
                             agent    = path[0]
 
-                # Render current frame
-                disp = build_display_grid(
-                    ss.grid, ss.start, ss.goal,
-                    path=path[step_idx:],
-                    agent_pos=agent,
-                )
-                lbl = f"{'🔄 Re-planned!' if replanned else 'Agent moving'} — step {total_cost}"
-                chart_ph.plotly_chart(
-                    make_figure(disp, lbl), use_container_width=True
-                )
-                status_ph.info(
-                    f"{'🔄 Re-planned!  ' if replanned else ''}"
-                    f"Nodes: {total_nodes}  |  Cost: {total_cost}  |  "
-                    f"Time: {total_time_ms:.1f} ms"
-                )
-                met1.metric("🔵 Nodes Visited",  total_nodes)
-                met2.metric("📏 Path Cost",       total_cost)
-                met3.metric("⏱ Execution Time",  f"{total_time_ms:.1f} ms")
+                prefix = "🔄 Re-planned — " if replanned else ""
+                frame_grids.append(build_display_grid(
+                    grid_sim, ss.start, ss.goal,
+                    path=path[step_idx:], agent_pos=agent,
+                ))
+                frame_labels.append(f"{prefix}Step {total_cost}")
 
-                time.sleep(delay)
+            if not stranded:
+                frame_grids.append(build_display_grid(
+                    grid_sim, ss.start, ss.goal, agent_pos=ss.goal
+                ))
+                frame_labels.append(f"🏁 Goal Reached! — Cost {total_cost}")
 
-            # Agent reached goal
-            disp = build_display_grid(
-                ss.grid, ss.start, ss.goal, agent_pos=ss.goal
+            ss.grid = grid_sim
+
+            frame_ms = max(30, int(1000 / anim_speed))
+            anim_fig = make_animation_figure(
+                frame_grids, frame_labels, ss.rows, ss.cols, frame_ms
             )
-            chart_ph.plotly_chart(
-                make_figure(disp, "🏁 Goal Reached!"),
-                use_container_width=True,
-            )
-            status_ph.success(
-                f"🏁 Goal Reached!  Nodes: {total_nodes}  |  "
-                f"Cost: {total_cost}  |  Time: {total_time_ms:.1f} ms"
-            )
-            ss.metrics = dict(nodes=total_nodes, cost=total_cost,
-                              time_ms=total_time_ms)
+            chart_ph.plotly_chart(anim_fig, use_container_width=True)
+            _auto_play(frame_ms)
+
+            ss.metrics       = dict(nodes=total_nodes, cost=total_cost, time_ms=total_time_ms)
             ss.result_path   = path
             ss.visited_order = visited_order
-            ss.agent_pos     = ss.goal
+            ss.agent_pos     = ss.goal if not stranded else agent
             met1.metric("🔵 Nodes Visited",  total_nodes)
             met2.metric("📏 Path Cost",       total_cost)
             met3.metric("⏱ Execution Time",  f"{total_time_ms:.1f} ms")
+            if stranded:
+                status_ph.error("⛔ All routes blocked — agent is stranded!")
+            else:
+                status_ph.success(
+                    f"🏁 Goal Reached!  Nodes: {total_nodes}  |  "
+                    f"Cost: {total_cost}  |  Time: {total_time_ms:.1f} ms"
+                )
 
 with st.expander("📖  How to use", expanded=False):
     st.markdown("""
