@@ -628,51 +628,53 @@ if run_btn:
             _render_plotly(visited=visited_order, title="❌ No path found")
             status_ph.error("❌ No path found — remove some obstacles and try again.")
         else:
-            status_ph.info("🎬 Building animation…")
+            status_ph.info("🎬 Animating search…")
 
-            # Subsample frames to keep payload under ~150 frames
+            # --- Exploration phase ---
             n = len(visited_order)
             step = max(1, n // 150)
             indices = list(range(0, n, step))
             if indices[-1] != n - 1:
                 indices.append(n - 1)
 
-            frame_grids, frame_labels = [], []
             for idx in indices:
                 vis_now   = visited_order[:idx + 1]
                 front_now = frontier_snaps[idx] if idx < len(frontier_snaps) else set()
-                frame_grids.append(build_display_grid(
+                disp = build_display_grid(
                     ss.grid, ss.start, ss.goal, visited=vis_now, frontier=front_now
-                ))
-                frame_labels.append(f"Exploring — {idx + 1} / {n}")
+                )
+                chart_ph.plotly_chart(
+                    make_figure(disp, f"Exploring — {idx + 1} / {n}"),
+                    use_container_width=True,
+                )
+                time.sleep(delay)
 
-            # Animate path cell-by-cell after exploration
+            # --- Path tracing phase ---
             for p_idx in range(1, len(path)):
                 partial_path = path[:p_idx + 1]
-                frame_grids.append(build_display_grid(
+                disp = build_display_grid(
                     ss.grid, ss.start, ss.goal,
                     visited=visited_order,
                     path=partial_path,
-                    agent_pos=path[p_idx],   # agent marks the advancing tip
-                ))
-                frame_labels.append(
-                    f"Tracing path — step {p_idx} / {len(path) - 1}"
+                    agent_pos=path[p_idx],
                 )
+                chart_ph.plotly_chart(
+                    make_figure(disp, f"Tracing path — step {p_idx} / {len(path) - 1}"),
+                    use_container_width=True,
+                )
+                time.sleep(delay)
 
-            # Final frame: full path revealed, no agent cursor
-            frame_grids.append(build_display_grid(
+            # --- Final frame ---
+            disp = build_display_grid(
                 ss.grid, ss.start, ss.goal, visited=visited_order, path=path
-            ))
-            frame_labels.append(
-                f"✅ Path found — Cost {len(path) - 1} — {ss.algo_name} / {ss.heur_name}"
             )
-
-            frame_ms = max(30, int(1000 / anim_speed))
-            anim_fig = make_animation_figure(
-                frame_grids, frame_labels, ss.rows, ss.cols, frame_ms
+            chart_ph.plotly_chart(
+                make_figure(
+                    disp,
+                    f"✅ Path found — Cost {len(path) - 1} — {ss.algo_name} / {ss.heur_name}",
+                ),
+                use_container_width=True,
             )
-            chart_ph.plotly_chart(anim_fig, use_container_width=True)
-            _auto_play(frame_ms)
 
             ss.result_path    = path
             ss.visited_order  = visited_order
@@ -705,12 +707,12 @@ if run_btn:
             agent    = ss.start
             step_idx = 0
 
-            frame_grids  = []
-            frame_labels = []
-            frame_grids.append(build_display_grid(
+            # Render initial frame
+            disp = build_display_grid(
                 grid_sim, ss.start, ss.goal, path=path, agent_pos=agent
-            ))
-            frame_labels.append("Start")
+            )
+            chart_ph.plotly_chart(make_figure(disp, "Start"), use_container_width=True)
+            time.sleep(delay)
 
             while agent != ss.goal:
                 if step_idx + 1 < len(path):
@@ -744,10 +746,13 @@ if run_btn:
                             total_nodes   += len(nv)
                             replanned      = True
                             if new_path is None:
-                                frame_grids.append(build_display_grid(
+                                disp = build_display_grid(
                                     grid_sim, ss.start, ss.goal, agent_pos=agent
-                                ))
-                                frame_labels.append(f"⛔ Stranded! — step {total_cost}")
+                                )
+                                chart_ph.plotly_chart(
+                                    make_figure(disp, f"⛔ Stranded! — step {total_cost}"),
+                                    use_container_width=True,
+                                )
                                 stranded = True
                                 break
                             path     = new_path
@@ -755,26 +760,26 @@ if run_btn:
                             agent    = path[0]
 
                 prefix = "🔄 Re-planned — " if replanned else ""
-                frame_grids.append(build_display_grid(
+                disp = build_display_grid(
                     grid_sim, ss.start, ss.goal,
                     path=path[step_idx:], agent_pos=agent,
-                ))
-                frame_labels.append(f"{prefix}Step {total_cost}")
+                )
+                chart_ph.plotly_chart(
+                    make_figure(disp, f"{prefix}Step {total_cost}"),
+                    use_container_width=True,
+                )
+                time.sleep(delay)
 
             if not stranded:
-                frame_grids.append(build_display_grid(
+                disp = build_display_grid(
                     grid_sim, ss.start, ss.goal, agent_pos=ss.goal
-                ))
-                frame_labels.append(f"🏁 Goal Reached! — Cost {total_cost}")
+                )
+                chart_ph.plotly_chart(
+                    make_figure(disp, f"🏁 Goal Reached! — Cost {total_cost}"),
+                    use_container_width=True,
+                )
 
             ss.grid = grid_sim
-
-            frame_ms = max(30, int(1000 / anim_speed))
-            anim_fig = make_animation_figure(
-                frame_grids, frame_labels, ss.rows, ss.cols, frame_ms
-            )
-            chart_ph.plotly_chart(anim_fig, use_container_width=True)
-            _auto_play(frame_ms)
 
             ss.metrics       = dict(nodes=total_nodes, cost=total_cost, time_ms=total_time_ms)
             ss.result_path   = path
@@ -816,3 +821,4 @@ with st.expander("📖  How to use", expanded=False):
 - **Manhattan** — $h = |\\Delta r| + |\\Delta c|$ (admissible, 4-connected grids)  
 - **Euclidean** — $h = \\sqrt{\\Delta r^2 + \\Delta c^2}$
 """)
+s
