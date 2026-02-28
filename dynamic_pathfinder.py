@@ -821,4 +821,3 @@ with st.expander("📖  How to use", expanded=False):
 - **Manhattan** — $h = |\\Delta r| + |\\Delta c|$ (admissible, 4-connected grids)  
 - **Euclidean** — $h = \\sqrt{\\Delta r^2 + \\Delta c^2}$
 """)
-s
