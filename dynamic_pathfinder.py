@@ -661,7 +661,20 @@ if run_btn:
                 ))
                 frame_labels.append(f"Exploring — {idx + 1} / {n}")
 
-            # Final frame shows the path
+            # Animate path cell-by-cell after exploration
+            for p_idx in range(1, len(path)):
+                partial_path = path[:p_idx + 1]
+                frame_grids.append(build_display_grid(
+                    ss.grid, ss.start, ss.goal,
+                    visited=visited_order,
+                    path=partial_path,
+                    agent_pos=path[p_idx],   # agent marks the advancing tip
+                ))
+                frame_labels.append(
+                    f"Tracing path — step {p_idx} / {len(path) - 1}"
+                )
+
+            # Final frame: full path revealed, no agent cursor
             frame_grids.append(build_display_grid(
                 ss.grid, ss.start, ss.goal, visited=visited_order, path=path
             ))
